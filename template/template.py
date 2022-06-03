@@ -111,7 +111,7 @@ with warnings.catch_warnings():
 tmpPath = tempfile.gettempdir() # specify directory for temporary files
 currPath = os.path.dirname(os.path.realpath(__file__)) #'.../rt-cloud/projects/project_name'
 rootPath = os.path.dirname(os.path.dirname(currPath)) #'.../rt-cloud'
-dicomPath = currPath+'/dicomDir' #'.../rt-cloud/projects/project_name/dicomDir/'
+dicomPath = rootPath+'/dicomDir' #'.../rt-cloud/dicomDir/'
 # add the path for the root and dicom directories to your python path
 sys.path.append(rootPath)
 sys.path.append(dicomPath)
