@@ -78,3 +78,6 @@ plotYRangeLow = -1
 plotYRangeHigh = 1
 plotAutoRangeX = false
 plotAutoRangeY = true
+
+# If replaying an OpenNeuro dataset, paste its accession number below
+dsAccessionNumber = 'None'

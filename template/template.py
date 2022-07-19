@@ -12,8 +12,8 @@ processing of these volumes as if this were a real real-time scan.
 
 --- PREPPING FOR A REALTIME SESSION ---
 We recommend first scanning participants in a prelimary session
-prior to the real-time scanning session to obtain preprocessed anatomical and
-functional reference scans and to define brain regions of interest (ROIs). 
+prior to the real-time scanning session if you want to use predefined
+anatomical templates and/or brain regions of interest (ROIs). 
 For this template project, we have preprocessed such a preliminary scan 
 using fMRIPrep (https://fmriprep.org), with outputs stored in the 
 template/fmriprep folder. This is also a good time to ensure that your
@@ -88,7 +88,6 @@ TRs 27-29: Inter-block interval (IBI)
 
 """-----------------------------------------------------------------------------
 The below portion of code simply imports modules and sets up path directories.
-You will not need to change any of the code in this section.
 -----------------------------------------------------------------------------"""
 # Importing modules and setting up path directories
 import os
@@ -96,7 +95,6 @@ import sys
 import warnings
 from subprocess import call
 import tempfile
-import uuid
 from pathlib import Path
 from datetime import datetime
 from copy import deepcopy
@@ -104,17 +102,19 @@ import numpy as np
 import nibabel as nib
 from sklearn.linear_model import LogisticRegression
 from scipy.special import expit # sigmoid function for logistic regression 
-import pdb # pdb.set_trace() for debugging
+import pdb # use pdb.set_trace() for debugging
 with warnings.catch_warnings():
     warnings.filterwarnings("ignore", category=UserWarning)
 
 tmpPath = tempfile.gettempdir() # specify directory for temporary files
 currPath = os.path.dirname(os.path.realpath(__file__)) #'.../rt-cloud/projects/project_name'
 rootPath = os.path.dirname(os.path.dirname(currPath)) #'.../rt-cloud'
-dicomPath = rootPath+'/dicomDir' #'.../rt-cloud/dicomDir/'
-# add the path for the root and dicom directories to your python path
+dicomPath = currPath+'/dicomDir' #'.../rt-cloud/projects/project_name/dicomDir/'
+print("Location of subject's dicoms: \n" + dicomPath + "\n")
+outPath = rootPath+'/outDir' #'.../rt-cloud/outDir/'
+
+# add the path for the root directory to your python path
 sys.path.append(rootPath)
-sys.path.append(dicomPath)
 
 from rtCommon.utils import loadConfigFile, stringPartialFormat
 from rtCommon.clientInterface import ClientInterface
@@ -123,7 +123,7 @@ from rtCommon.bidsArchive import BidsArchive
 from rtCommon.bidsRun import BidsRun
 
 """-----------------------------------------------------------------------------
-We will first initialize some important variables which will be used
+We will now initialize some important variables which will be used
 for later parts of the code. 
 
 When starting a new project, you will need
@@ -158,16 +158,16 @@ hrf_delay = 2 # assuming relevant brain activations will 2 TRs later (2sec TRs)
 run1_design = np.loadtxt(currPath+'/study_design/run1.txt')
 run2_design = np.loadtxt(currPath+'/study_design/run2.txt')
 run_designs = np.concatenate([[run1_design, run2_design]])
-print(run_designs.shape)
+print("run_designs.shape",run_designs.shape)
 
 """-----------------------------------------------------------------------------
 The below section initiates the clientInterface that enables communication 
 between the three RTCloud components, which may be running on different 
 machines.
 -----------------------------------------------------------------------------"""
-# Initialize the remote procedure call (RPC) connection to the projectInterface.
-# This will give us a dataInterface for retrieving files,
-# a subjectInterface for giving feedback, a webInterface
+# Initialize the remote procedure call (RPC) connections for the data_analyser
+# (aka projectInferface). This will give us a dataInterface for retrieving 
+# files, a subjectInterface for giving feedback, a webInterface
 # for updating what is displayed on the experimenter's webpage,
 # and enable BIDS functionality
 clientInterfaces = ClientInterface()
@@ -177,15 +177,7 @@ webInterface  = clientInterfaces.webInterface
 bidsInterface = clientInterfaces.bidsInterface
 archive = BidsArchive(tmpPath+'/bidsDataset')
 
-"""-----------------------------------------------------------------------------
-You will likely not need to change any of the code in this section.
-In this section we specify the folder where our DICOMs live and set our
-allowed file types. The folder where our DICOMs will should already be 
-fully determined based on the .toml file. The allowedTypes is important because 
-the file service running at the control room machine will only transfer allowed
-file types between RTCloud components.
------------------------------------------------------------------------------"""
-print("Location of subject's dicoms: \n" + dicomPath + "\n")
+# Only allowedFileTypes will be able to be transfered between RTCloud components.
 allowedFileTypes = dataInterface.getAllowedFileTypes()
 print(f"allowedFileTypes: {allowedFileTypes}")
 
@@ -222,17 +214,25 @@ try:
 except:
     pass
 
-# note: using a while loop because it can handle altered toml variables
+# we use a while loop because it can handle altered toml variables
 while curRun <= numRuns:
     # prep stream of DICOMS -> BIDS 
     # "anonymize" removes participant specific fields from each DICOM header.
-    dicomScanNamePattern = stringPartialFormat(cfg.dicomNamePattern, 'RUN', curRun)
-    streamId = bidsInterface.initDicomBidsStream(dicomPath,dicomScanNamePattern,
-                                                cfg.minExpectedDicomSize, 
-                                                anonymize=True,
-                                                **{'subject':cfg.subjectNum,
-                                                'run':curRun,
-                                                'task':'sceneface'})
+    if cfg.dsAccessionNumber=='None': 
+        dicomScanNamePattern = stringPartialFormat(cfg.dicomNamePattern, 'RUN', curRun)
+        streamId = bidsInterface.initDicomBidsStream(dicomPath,dicomScanNamePattern,
+                                                    cfg.minExpectedDicomSize, 
+                                                    anonymize=True,
+                                                    **{'subject':cfg.subjectNum,
+                                                    'run':curRun,
+                                                    'task':'sceneface'})
+    else:
+        # For OpenNeuro replay, initialize a BIDS stream using the dataset's Accession Number
+        streamId = bidsInterface.initOpenNeuroStream(cfg.dsAccessionNumber,
+                                                        **{'subject':cfg.subjectNum,
+                                                        'run':curRun,
+                                                        'task':'sceneface'})
+
     # prep BIDS-Run, which will store each BIDS-Incremental in the current run
     currentBidsRun = BidsRun()
 
@@ -277,7 +277,7 @@ while curRun <= numRuns:
             print(f"Motion correction time: {B-A:.4f}, saved to {tmpPath+'/temp_aligned'}")
 
             # Spatial smoothing
-            fwhm = 5 # 5mm full-width half-maximum smoothing kernel (dividing by 2.3548 converts from standard dev to fwhm)
+            fwhm = 5 # 5mm full-width half-maximum smoothing kernel (dividing by 2.3548 converts from standard dev. to fwhm)
             command = f'fslmaths {tmpPath+"/temp_aligned"} -kernel gauss {fwhm/2.3548} -fmean {tmpPath+"/temp_aligned_smoothed"}'
             A = datetime.now().timestamp(); call(command,shell=True); B = datetime.now().timestamp()
             print(f"Smooth time: {B-A:.4f}, saved to {tmpPath+'/temp_aligned_smoothed'}")
@@ -289,7 +289,7 @@ while curRun <= numRuns:
 
             # Load nifti data as img variable
             img = nib.load(tmpPath+'/temp_aligned_smoothed_masked.nii.gz').get_fdata().flatten()
-
+            
             # If stable block, save activations in preparation for model fitting before neurofeedback blocks
             if curBlock<=4:
                 try: # add train_activations from current TR to saved matrix
@@ -326,11 +326,15 @@ while curRun <= numRuns:
                 IMPORTANT: the inputs MUST be python integers/floats, not numpy!
                 """
                 webInterface.plotDataPoint(curRun, point_idx, scene_minus_face)
-                """
-                Send the model outputs back to the computer running the
-                stimulus presentation to adjust stimulus presentation. 
-                """
-                subjInterface.setResult(curRun, runTR, scene_minus_face)
+                # Send the model outputs back to the computer running analysis_listener. 
+                subjInterface.setResultDict(name=f'run{curRun}_TR{runTR}',
+                                            values={'values': scene_minus_face})
+            else: 
+                # To demonstrate analyis_listener functionality without having to wait for neurofeedback 
+                # blocks to begin, output to the computer running analysis_listener the avg. voxel
+                # activation for each TR until then.
+                subjInterface.setResultDict(name=f'run{curRun}_TR{runTR}',
+                                            values={'values': str(np.round(np.mean(img),2))})
 
             # Check if end of block
             if ((runTR-disdaqs) % cfg.num_TRs_per_block) == 0: 
@@ -367,10 +371,11 @@ while curRun <= numRuns:
     bidsInterface.closeStream(streamId)
 
 """-----------------------------------------------------------------------------
-Let's save the outputs from our run and send it to the presentation computer.
+Let's save the final outputs and send it to the presentation computer.
 -----------------------------------------------------------------------------"""
-result_dict = {"realtime_outputs": realtime_outputs}
-subjInterface.setResultDict(result_dict)
+result_dict = {"realtime_outputs": list(realtime_outputs)}
+subjInterface.setResultDict(name='finished_outputs',
+                            values=result_dict)
 
 print("-----------------------------------------------------------------------\n"
 "REAL-TIME EXPERIMENT COMPLETE!\n"
@@ -380,8 +385,8 @@ sys.exit(0)
 """-----------------------------------------------------------------------------
 You are now ready to conduct your own RT-Cloud enabled project!
 
-Additional note: you can create an initialize.py and/or finalize.py file, which
-are scripts you can run by clicking the respective buttons on the RT-Cloud web 
+Additional note: you can create an "initialize.py" and/or "finalize.py" file, which
+are scripts that can run by clicking the respective buttons on the RT-Cloud web 
 browser. This can be helpful when needing to run specific code at the
 beginning or end of your experiment.
 -----------------------------------------------------------------------------"""
