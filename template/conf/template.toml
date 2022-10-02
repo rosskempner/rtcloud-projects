@@ -14,16 +14,6 @@
 # web interface.
 title = "Template Project"
 
-# RT-Cloud can read DICOMs in three different ways:
-# (stream) "streaming" in DICOMs as they are being created
-# (replay) "replaying" a folder of DICOMs, pretending there is a TR delay
-# simulating real-time scanning of those DICOMs
-# (openneuro) "replay" an OpenNeuro dataset
-# If you use setting "stream" with a folder already full of DICOMs, it 
-# will run through all the DICOMs as fast as possible, which may be 
-# useful for testing purposes. 
-scanSetup = 'stream' # can pick between stream/replay/openneuro
-
 # If replaying brain images, "demoStep" simulates how long to wait (in seconds) 
 # between reading in each DICOM (i.e., it defines the simulated TR).
 demoStep = 0
@@ -36,9 +26,6 @@ demoStep = 0
 # from the sixth TR in the third run of the first scanning session. 
 # Edit to match your expected DICOM naming pattern.
 dicomNamePattern = "001_{RUN:06d}_{TR:06d}.dcm"
-
-# If you choose the "openneuro" setting above:
-# openneuro_dataset = ds000000  # OpenNeuro dataset's accession number
 
 # subjectNum, subjectDay, and scanNum are not used by this template 
 # project but are by default displayed on the web interface "Run" tab
