@@ -101,7 +101,6 @@ from copy import deepcopy
 import numpy as np
 import nibabel as nib
 from sklearn.linear_model import LogisticRegression
-from scipy.special import expit # sigmoid function for logistic regression 
 import pdb # use pdb.set_trace() for debugging
 with warnings.catch_warnings():
     warnings.filterwarnings("ignore", category=UserWarning)
@@ -150,7 +149,7 @@ numBlocks = cfg.numBlocks
 blockTR = 1
 runTR = 1
 disdaqs = 10 # num volumes at start of run to discard for MRI to reach steady state
-hrf_delay = 2 # assuming relevant brain activations will 2 TRs later (2sec TRs)
+hrf_delay = 2 # assuming relevant brain activations emerge 2 TRs later (1 TR = 2 sec)
 
 # Load experimental design for participant. Below code loads a text file that
 # contains a list of what stimulus type is present on every TR
@@ -165,7 +164,7 @@ The below section initiates the clientInterface that enables communication
 between the three RTCloud components, which may be running on different 
 machines.
 -----------------------------------------------------------------------------"""
-# Initialize the remote procedure call (RPC) connections for the data_analyser
+# Initialize the remote procedure call (RPC) for the data_analyser
 # (aka projectInferface). This will give us a dataInterface for retrieving 
 # files, a subjectInterface for giving feedback, a webInterface
 # for updating what is displayed on the experimenter's webpage,
