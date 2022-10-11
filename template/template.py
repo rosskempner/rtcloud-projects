@@ -224,13 +224,13 @@ while curRun <= numRuns:
                                                     anonymize=True,
                                                     **{'subject':cfg.subjectNum,
                                                     'run':curRun,
-                                                    'task':'sceneface'})
+                                                    'task':cfg.taskName})
     else:
         # For OpenNeuro replay, initialize a BIDS stream using the dataset's Accession Number
         streamId = bidsInterface.initOpenNeuroStream(cfg.dsAccessionNumber,
                                                         **{'subject':cfg.subjectNum,
-                                                        'run':curRun,
-                                                        'task':'sceneface'})
+                                                        'run':f"0{curRun}",
+                                                        'task':cfg.taskName})
 
     # prep BIDS-Run, which will store each BIDS-Incremental in the current run
     currentBidsRun = BidsRun()
