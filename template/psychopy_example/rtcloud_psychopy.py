@@ -1,12 +1,11 @@
 import time
-from psychopy import core, visual
+from psychopy import core, visual, event
 import os 
-import sys 
 import json
 import numpy as np
 
 ## Specify analysis_listener outputs folder ##
-outPath = sys.argv[1]
+outPath = "analysis listener output directory here!"
 
 # Setup variables
 starting_TR = 13
@@ -31,6 +30,8 @@ for run in range(1,numRuns+1):
         filename = f'{outPath}/run{run}_TR{TR}.json'
         # Wait for file to be synced
         while not os.path.exists(filename):
+            keys_pressed = event.getKeys()
+            if "escape" in keys_pressed: core.quit() # allow escape key to quit experiment
             time.sleep(.1) # retry every 100ms
         time.sleep(.1) # buffer to prevent opening file before fully saved
         
