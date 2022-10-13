@@ -16,7 +16,7 @@ title = "Template Project"
 
 # If replaying brain images, "demoStep" simulates how long to wait (in seconds) 
 # between reading in each DICOM (i.e., it defines the simulated TR).
-demoStep = 0
+demoStep = 2
 
 # If you choose the "stream" or "replay" setting above:
 # Check with your MRI technician or your previously collected DICOMs
