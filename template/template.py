@@ -93,6 +93,7 @@ The below portion of code simply imports modules and sets up path directories.
 import os
 import sys
 import warnings
+import argparse
 from subprocess import call
 import tempfile
 from pathlib import Path
@@ -134,10 +135,16 @@ Note: if you changed the name of this project from "template" to something
 else, you will need to rename "template.py" and "template.toml" to match
 the new project name.
 -----------------------------------------------------------------------------"""
-# obtain the full path for the configuration toml file 
-# note: the variables in the toml can be changed in the web browser interface
+# obtain the full path for the configuration toml file
+# if the toml variables have been changed in the web interface 
+# then use those instead
 defaultConfig = os.path.join(currPath, f'conf/{Path(__file__).stem}.toml')
-cfg = loadConfigFile(defaultConfig)
+argParser = argparse.ArgumentParser()
+argParser.add_argument('--config', '-c', default=defaultConfig, type=str,
+                        help='experiment config file (.json or .toml)')
+args = argParser.parse_args(None)
+cfg = loadConfigFile(args.config)
+
 print(f"\n----Starting project: {cfg.title}----\n")
 
 # Prep starting run and scan number 
