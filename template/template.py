@@ -237,7 +237,7 @@ for curRun in range(startRun,numRuns+1):
     currentBidsRun = BidsRun()
 
     for curBlock in range(startBlock,numBlocks+1):
-        for TR in range(1,TRs_per_run+1):
+        for TR in range(1,num_TRs_per_block+1):
             print(f'--- Run {curRun} | Block {curBlock} | TR {TR} ---')
 
             # Note that these variables are 1-indexed (starting at one, not zero)!
