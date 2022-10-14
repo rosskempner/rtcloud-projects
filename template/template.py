@@ -177,10 +177,6 @@ webInterface  = clientInterfaces.webInterface
 bidsInterface = clientInterfaces.bidsInterface
 archive = BidsArchive(tmpPath+'/bidsDataset')
 
-# Only allowedFileTypes will be able to be transfered between RTCloud components.
-allowedFileTypes = dataInterface.getAllowedFileTypes()
-print(f"allowedFileTypes: {allowedFileTypes}")
-
 """-----------------------------------------------------------------------------
 Locate your pre-existing reference scans. You don't need to 
 collect a prior session of scanning before RT-fMRI, but it can be useful for
@@ -205,7 +201,6 @@ for later training of the multivoxel classifier.
 # clear existing web browser plots if there are any
 try:
     webInterface.clearAllPlots()
-    point_idx=-1 # reset the first x-axis plot location
 except:
     pass
 
@@ -232,6 +227,9 @@ for curRun in range(startRun,numRuns+1):
 
     # prep BIDS-Run, which will store each BIDS-Incremental in the current run
     currentBidsRun = BidsRun()
+
+    # reset the first x-axis plot location for Data Plot
+    point_idx=-1 
 
     # Skip analysis of first disdaqs volumes, add 2 TRs to account for hrf delay
     # TR will be our run-specific TR counter
@@ -353,8 +351,9 @@ for curRun in range(startRun,numRuns+1):
                     face_classes[face_classes==1]=0
                     face_classes[face_classes==2]=1
                     # fit classifiers according to respective class labels
-                    scene_classifier = LogisticRegression(penalty='l2', max_iter=300, random_state=0)
-                    face_classifier = LogisticRegression(penalty='l2', max_iter=300, random_state=0)
+                    # for quick demonstration purposes im using a strict max_iter cutoff
+                    scene_classifier = LogisticRegression(penalty='l2', max_iter=100, random_state=0)
+                    face_classifier = LogisticRegression(penalty='l2', max_iter=100, random_state=0)
                     scene_classifier.fit(zscored_activations, scene_classes)
                     face_classifier.fit(zscored_activations, face_classes)
                     print(f"Fit classifier time: {datetime.now().timestamp()-A:.4f}")
