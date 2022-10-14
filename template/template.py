@@ -38,12 +38,8 @@ block type (face or scene) and go category. For instance, the cue
 “indoor scenes” indicated that participants should press for indoor scenes 
 (90% go trials) and refrain from pressing when seeing outdoor scenes 
 (10% no-go trials). Participants continuously ignored the overlaid irrelevant 
-category stimuli (e.g., faces).
-
-The participant instructions (e.g., press button for female
-faces) showed up on the 1st TR of each block. Stimuli were presented
-starting on the 2nd TR. A new overlaid face/scene stimulus was presented 
-every second.
+category stimuli (e.g., faces). The participant instructions (e.g., press 
+button for female faces) showed up on the 1st TR of each block. 
 
 --- REAL-TIME PROCESSING PIPELINE ---
 Due to hemodynamic lag, we will use the associated brain activations from 
@@ -54,15 +50,14 @@ stimulus.
 PRIOR TO STABLE BLOCKS: 10 discarded TRs (disdaqs)
 
 STABLE BLOCK PIPELINE (first 4 blocks):
-TRs 1: Task instruction. Motion correct to the fMRIPrep 
-    functional reference volume; save this transformation matrix
+TRs 1: Task instruction. Use this TR as the functional reference volume for 
+    the rest of the scan. Motion correct the fMRIPrep brain mask to the
+    functional reference volume and mask out the non-brain voxels.
 TRs 2-26: 
     1. Transform DICOM to Nifti 
-    1. Motion correct to the initial TR and use the precomputed transformation 
-    matrix to obtain a volume transformed to the fMRIPrep native space
+    1. Motion correct to the functional reference
     2. Spatial smoothing using 5mm Gaussian kernel (FWHM)
-    3. Use fMRIPrep's whole-brain mask to mask voxels deemed to be outside
-    of the brain
+    3. Use brain mask (EPI space) to mask out non-brain voxels
 TRs 27-29: Inter-block interval (IBI) and, if this is the final stable
     block, train the multivoxel pattern classifier. 
 
@@ -70,15 +65,13 @@ NEUROFEEDBACK BLOCK PIPELINE (last 4 blocks):
 TRs 1: Task instruction.
 TRs 2-26:
     1. Transform DICOM to Nifti 
-    1. Motion correct to the initial TR from block 1 and use the precomputed 
-    transform matrix to obtain a volume transformed to the fMRIPrep native space
+    1. Motion correct to the functional reference
     2. Spatial smoothing using 5mm Gaussian kernel (FWHM)
     3. Z-score using mean and sd from current run's stable blocks
-    4. Use fMRIPrep's whole-brain mask to mask voxels deemed to be outside
-    of the brain
+    4. Use brain mask (EPI space) to mask out non-brain voxels
     5. Input voxels to the trained classifier to obtain model prediction 
     for participant's attention towards either scenes or faces, save this
-    output as a text file to be read by the presentation software. An increase
+    output as a json file to be read by the presentation software. An increase
     in attention to (task-irrelevant) negative faces will trigger an increase
     in face visibility (i.e., punishing participants by making the task harder),
     as gauged by a moving window over the previous 3 TR classifier outputs. 
@@ -137,7 +130,7 @@ the new project name.
 -----------------------------------------------------------------------------"""
 # obtain the full path for the configuration toml file
 # if the toml variables have been changed in the web interface 
-# then use those instead
+# then use those altered variables instead (note: does not overwrite the toml)
 defaultConfig = os.path.join(currPath, f'conf/{Path(__file__).stem}.toml')
 argParser = argparse.ArgumentParser()
 argParser.add_argument('--config', '-c', default=defaultConfig, type=str,
@@ -149,18 +142,18 @@ print(f"\n----Starting project: {cfg.title}----\n")
 
 # Prep starting run and scan number 
 # These are 1-indexed because that's how the DICOM file names are written
-curRun = cfg.runNum[0]
-curBlock = cfg.blockNum[0]
-numRuns = cfg.numRuns
-numBlocks = cfg.numBlocks
-blockTR = 1
-runTR = 1
+# Note: cfg variables altered in web interface will be strings!
+startRun = int(cfg.runNum[0])
+startBlock = int(cfg.blockNum)
+numRuns = int(cfg.numRuns)
+numBlocks = int(cfg.numBlocks)
+TRs_per_run = cfg.num_total_TRs
 disdaqs = 10 # num volumes at start of run to discard for MRI to reach steady state
 hrf_delay = 2 # assuming relevant brain activations emerge 2 TRs later (1 TR = 2 sec)
 
 # Load experimental design for participant. Below code loads a text file that
-# contains a list of what stimulus type is present on every TR
-# (0=none, 1=scene, 2=face).
+# contains a list of what stimulus type was instructed to be attended to 
+# for every every TR (0=none, 1=scene, 2=face).
 run1_design = np.loadtxt(currPath+'/study_design/run1.txt')
 run2_design = np.loadtxt(currPath+'/study_design/run2.txt')
 run_designs = np.concatenate([[run1_design, run2_design]])
@@ -217,11 +210,11 @@ realtime_outputs = []
 # clear existing web browser plots if there are any
 try:
     webInterface.clearAllPlots()
+    point_idx=-1 # to keep track of where to first plot in the Data Plots tab
 except:
     pass
 
-# we use a while loop because it can handle altered toml variables
-while curRun <= numRuns:
+for curRun in range(startRun,numRuns+1):
     # prep stream of DICOMS -> BIDS 
     # "anonymize" removes participant specific fields from each DICOM header.
     if cfg.dsAccessionNumber=='None': 
@@ -242,137 +235,129 @@ while curRun <= numRuns:
     # prep BIDS-Run, which will store each BIDS-Incremental in the current run
     currentBidsRun = BidsRun()
 
-    while curBlock <= numBlocks:
-        print(f'--- Run {curRun} | Block {curBlock} | runTR {runTR} | blockTR {blockTR} ---')
+    for curBlock in range(startBlock,numBlocks+1):
+        for TR in range(1,TRs_per_run+1):
+            print(f'--- Run {curRun} | Block {curBlock} | TR {TR} ---')
 
-        # Note that these variables are 1-indexed (starting at one, not zero)!
-        bidsIncremental = bidsInterface.getIncremental(streamId,volIdx=runTR,
-                                        demoStep=cfg.demoStep)
-        currentBidsRun.appendIncremental(bidsIncremental)
-        niftiObject = bidsIncremental.image
-        
-        if runTR > (disdaqs+hrf_delay): # dont analyze disdaq volumes + add 2 TRs to account for hrf delay
-            # get the true class for this TR (0=N/A, 1=scene, 2=face)
-            # -1 to account for 1-indexing a Python array, another -2 for runTR due to hrf delay
-            actual_class = int(run_designs[curRun-1,runTR-1-hrf_delay]) 
+            # Note that these variables are 1-indexed (starting at one, not zero)!
+            bidsIncremental = bidsInterface.getIncremental(streamId,volIdx=TR,
+                                            demoStep=cfg.demoStep)
+            currentBidsRun.appendIncremental(bidsIncremental)
+            niftiObject = bidsIncremental.image
+            
+            if TR > (disdaqs+hrf_delay): # dont analyze disdaq volumes + add 2 TRs to account for hrf delay
+                # get the true class for this TR (0=N/A, 1=scene, 2=face)
+                # -1 to account for 1-indexing a Python array, another -2 due to hrf delay
+                actual_class = int(run_designs[curRun-1,TR-1-hrf_delay]) 
 
-            if curRun==1 and curBlock==1 and runTR==13: 
-                # this is our first non-disdaq functional volume for the scanning session
-                # we will use it as a reference scan for all subsequent functional volumes this session
+                if curRun==1 and curBlock==1 and TR==13: 
+                    # this is our first non-disdaq functional volume for the scanning session
+                    # we will use it as a reference scan for all subsequent functional volumes this session
 
+                    # save Nifti to temporary location 
+                    nib.save(niftiObject, tmpPath+"/funcRef_scanner.nii")
+                    print(f"Temp. nifti location: {tmpPath+'/funcRef_scanner.nii'}")
+
+                    # transform precollected brain mask from T1w space to native/EPI/BOLD space using this TR as reference
+                    command = f"antsApplyTransforms --input {brainmask_T1w} \
+                    --interpolation NearestNeighbor \
+                    --output {tmpPath+'/brainmask_scanner.nii'} \
+                    --reference-image {tmpPath+'/funcRef_scanner.nii'} \
+                    --transform {T1w_to_scanner}"
+                    A = datetime.now().timestamp(); call(command,shell=True); B = datetime.now().timestamp()
+                    print(f"Brain mask transform time: {B-A:.4f}, saved to {tmpPath+'/brainmask_scanner.nii'}")
+                
                 # save Nifti to temporary location 
-                nib.save(niftiObject, tmpPath+"/funcRef_scanner.nii")
-                print(f"Temp. nifti location: {tmpPath+'/funcRef_scanner.nii'}")
+                nib.save(niftiObject, tmpPath+"/temp.nii")
+                print(f"Temp. nifti location: {tmpPath+'/temp.nii'}")
 
-                # transform precollected brain mask from T1w space to native/EPI/BOLD space using this TR as reference
-                command = f"antsApplyTransforms --input {brainmask_T1w} \
-                --interpolation NearestNeighbor \
-                --output {tmpPath+'/brainmask_scanner.nii'} \
-                --reference-image {tmpPath+'/funcRef_scanner.nii'} \
-                --transform {T1w_to_scanner}"
+                # Motion correct to this run's functional reference
+                command = f"mcflirt -in {tmpPath+'/temp.nii'} -reffile {tmpPath+'/funcRef_scanner.nii'} -out {tmpPath+'/temp_aligned'}"
                 A = datetime.now().timestamp(); call(command,shell=True); B = datetime.now().timestamp()
-                print(f"Brain mask transform time: {B-A:.4f}, saved to {tmpPath+'/brainmask_scanner.nii'}")
-            
-            # save Nifti to temporary location 
-            nib.save(niftiObject, tmpPath+"/temp.nii")
-            print(f"Temp. nifti location: {tmpPath+'/temp.nii'}")
+                print(f"Motion correction time: {B-A:.4f}, saved to {tmpPath+'/temp_aligned'}")
 
-            # Motion correct to this run's functional reference
-            command = f"mcflirt -in {tmpPath+'/temp.nii'} -reffile {tmpPath+'/funcRef_scanner.nii'} -out {tmpPath+'/temp_aligned'}"
-            A = datetime.now().timestamp(); call(command,shell=True); B = datetime.now().timestamp()
-            print(f"Motion correction time: {B-A:.4f}, saved to {tmpPath+'/temp_aligned'}")
+                # Spatial smoothing
+                fwhm = 5 # 5mm full-width half-maximum smoothing kernel (dividing by 2.3548 converts from standard dev. to fwhm)
+                command = f'fslmaths {tmpPath+"/temp_aligned"} -kernel gauss {fwhm/2.3548} -fmean {tmpPath+"/temp_aligned_smoothed"}'
+                A = datetime.now().timestamp(); call(command,shell=True); B = datetime.now().timestamp()
+                print(f"Smooth time: {B-A:.4f}, saved to {tmpPath+'/temp_aligned_smoothed'}")
 
-            # Spatial smoothing
-            fwhm = 5 # 5mm full-width half-maximum smoothing kernel (dividing by 2.3548 converts from standard dev. to fwhm)
-            command = f'fslmaths {tmpPath+"/temp_aligned"} -kernel gauss {fwhm/2.3548} -fmean {tmpPath+"/temp_aligned_smoothed"}'
-            A = datetime.now().timestamp(); call(command,shell=True); B = datetime.now().timestamp()
-            print(f"Smooth time: {B-A:.4f}, saved to {tmpPath+'/temp_aligned_smoothed'}")
+                # Masking voxels outside the brain 
+                command = f'fslmaths {tmpPath+"/temp_aligned_smoothed"} -mas {tmpPath+"/brainmask_scanner"} {tmpPath+"/temp_aligned_smoothed_masked"}'
+                A = datetime.now().timestamp(); call(command,shell=True); B = datetime.now().timestamp()
+                print(f"Masking time: {B-A:.4f}")
 
-            # Masking voxels outside the brain 
-            command = f'fslmaths {tmpPath+"/temp_aligned_smoothed"} -mas {tmpPath+"/brainmask_scanner"} {tmpPath+"/temp_aligned_smoothed_masked"}'
-            A = datetime.now().timestamp(); call(command,shell=True); B = datetime.now().timestamp()
-            print(f"Masking time: {B-A:.4f}")
+                # Load nifti data as img variable
+                img = nib.load(tmpPath+'/temp_aligned_smoothed_masked.nii.gz').get_fdata().flatten()
+                
+                # If stable block, save activations in preparation for model fitting before neurofeedback blocks
+                if curBlock<=4:
+                    try: # add train_activations from current TR to saved matrix
+                        train_activations = np.vstack([train_activations, img])
+                        train_classes = np.hstack([train_classes, actual_class])
+                    except: # if train_activations not yet defined (or corrupted), then define the variable
+                        train_activations = img
+                        train_classes = actual_class
+                else:
+                    try: # add train_activations from current TR to saved matrix
+                        test_activations = np.vstack([test_activations, img])
+                        test_classes = np.hstack([test_classes, actual_class])
+                    except: # if train_activations not yet defined (or corrupted), then define the variable
+                        test_activations = img
+                        test_classes = actual_class
+                
+                # if neurofeedback block and TR can be used to predict stimulus (1=scene, 2=face)
+                if curBlock>4 and actual_class!=0: 
+                    #img = nib.load(tmpPath+'/temptemp.nii.gz').get_fdata().flatten()
+                    # z-score the input TR based on the mean/std of the training activations
+                    zscored_img = ((img-train_mean) / train_std)
+                    point_idx+=1
+                    # predict class using trained classifiers
+                    scene_class_prob = scene_classifier.predict_proba(zscored_img[None,:]).flatten()[1]
+                    face_class_prob = face_classifier.predict_proba(zscored_img[None,:]).flatten()[1]
+                    scene_minus_face = scene_class_prob - face_class_prob
+                    realtime_outputs = np.concatenate([realtime_outputs,[scene_minus_face]])
+                    """
+                    We will use webInterface.plotDataPoint() to send the result to the RTCloud web interface 
+                    to be plotted in the Data Plots tab. Each run will have its own data plot. 
+                    Make sure that your .toml file is configured to work with the plots you are trying to make.
+                    IMPORTANT: the inputs MUST be python integers/floats, not numpy!
+                    """
+                    webInterface.plotDataPoint(curRun, point_idx, scene_minus_face)
+                    # Send the model outputs back to the computer running analysis_listener. 
+                    subjInterface.setResultDict(name=f'run{curRun}_TR{TR}',
+                                                values={'values': scene_minus_face})
+                else: 
+                    # To demonstrate analyis_listener functionality without having to wait for neurofeedback 
+                    # blocks to begin, output to the computer running analysis_listener the avg. voxel
+                    # activation for each TR until then.
+                    subjInterface.setResultDict(name=f'run{curRun}_TR{TR}',
+                                                values={'values': str(np.round(np.mean(img),2))})
 
-            # Load nifti data as img variable
-            img = nib.load(tmpPath+'/temp_aligned_smoothed_masked.nii.gz').get_fdata().flatten()
-            
-            # If stable block, save activations in preparation for model fitting before neurofeedback blocks
-            if curBlock<=4:
-                try: # add train_activations from current TR to saved matrix
-                    train_activations = np.vstack([train_activations, img])
-                    train_classes = np.hstack([train_classes, actual_class])
-                except: # if train_activations not yet defined (or corrupted), then define the variable
-                    train_activations = img
-                    train_classes = actual_class
-            else:
-                try: # add train_activations from current TR to saved matrix
-                    test_activations = np.vstack([test_activations, img])
-                    test_classes = np.hstack([test_classes, actual_class])
-                except: # if train_activations not yet defined (or corrupted), then define the variable
-                    test_activations = img
-                    test_classes = actual_class
-            
-            # if neurofeedback block and TR can be used to predict stimulus (1=scene, 2=face)
-            if curBlock>4 and actual_class!=0: 
-                #img = nib.load(tmpPath+'/temptemp.nii.gz').get_fdata().flatten()
-                # z-score the input TR based on the mean/std of the training activations
-                zscored_img = ((img-train_mean) / train_std)
-                if curBlock==5 and blockTR==4: # if first prediction of the current run
-                    point_idx=-1 # to keep track of where to plot in the Data Plots tab
-                point_idx+=1
-                # predict class using trained classifiers
-                scene_class_prob = scene_classifier.predict_proba(zscored_img[None,:]).flatten()[1]
-                face_class_prob = face_classifier.predict_proba(zscored_img[None,:]).flatten()[1]
-                scene_minus_face = scene_class_prob - face_class_prob
-                realtime_outputs = np.concatenate([realtime_outputs,[scene_minus_face]])
-                """
-                We will use webInterface.plotDataPoint() to send the result to the RTCloud web interface 
-                to be plotted in the Data Plots tab. Each run will have its own data plot. 
-                Make sure that your .toml file is configured to work with the plots you are trying to make.
-                IMPORTANT: the inputs MUST be python integers/floats, not numpy!
-                """
-                webInterface.plotDataPoint(curRun, point_idx, scene_minus_face)
-                # Send the model outputs back to the computer running analysis_listener. 
-                subjInterface.setResultDict(name=f'run{curRun}_TR{runTR}',
-                                            values={'values': scene_minus_face})
-            else: 
-                # To demonstrate analyis_listener functionality without having to wait for neurofeedback 
-                # blocks to begin, output to the computer running analysis_listener the avg. voxel
-                # activation for each TR until then.
-                subjInterface.setResultDict(name=f'run{curRun}_TR{runTR}',
-                                            values={'values': str(np.round(np.mean(img),2))})
+                # Check if end of block
+                if ((TR-disdaqs) % cfg.num_TRs_per_block) == 0: 
+                    print(f"==END OF BLOCK {curBlock}!==\n")
+                    # if end of stable blocks, train scene-classifier and face-classifier
+                    if curBlock==4: 
+                        A = datetime.now().timestamp()
+                        # z-score the training activations
+                        train_mean = np.mean(train_activations)
+                        train_std = np.std(train_activations)
+                        zscored_activations = (train_activations-train_mean) / train_std
+                        scene_classes = deepcopy(train_classes)
+                        # define classes as correct (1) or incorrect (2) for scene and face model
+                        scene_classes[scene_classes==2]=0
+                        face_classes = deepcopy(train_classes)
+                        face_classes[face_classes==1]=0
+                        face_classes[face_classes==2]=1
+                        # fit classifiers according to respective class labels
+                        scene_classifier = LogisticRegression(penalty='l2', max_iter=300, random_state=0)
+                        face_classifier = LogisticRegression(penalty='l2', max_iter=300, random_state=0)
+                        scene_classifier.fit(zscored_activations, scene_classes)
+                        face_classifier.fit(zscored_activations, face_classes)
+                        print(f"Fit classifier time: {datetime.now().timestamp()-A:.4f}")
 
-            # Check if end of block
-            if ((runTR-disdaqs) % cfg.num_TRs_per_block) == 0: 
-                print(f"==END OF BLOCK {curBlock}!==\n")
-                # if end of stable blocks, train scene-classifier and face-classifier
-                if curBlock==4: 
-                    A = datetime.now().timestamp()
-                    # z-score the training activations
-                    train_mean = np.mean(train_activations)
-                    train_std = np.std(train_activations)
-                    zscored_activations = (train_activations-train_mean) / train_std
-                    scene_classes = deepcopy(train_classes)
-                    # define classes as correct (1) or incorrect (2) for scene and face model
-                    scene_classes[scene_classes==2]=0
-                    face_classes = deepcopy(train_classes)
-                    face_classes[face_classes==1]=0
-                    face_classes[face_classes==2]=1
-                    # fit classifiers according to respective class labels
-                    scene_classifier = LogisticRegression(penalty='l2', max_iter=300, random_state=0)
-                    face_classifier = LogisticRegression(penalty='l2', max_iter=300, random_state=0)
-                    scene_classifier.fit(zscored_activations, scene_classes)
-                    face_classifier.fit(zscored_activations, face_classes)
-                    print(f"Fit classifier time: {datetime.now().timestamp()-A:.4f}")
-                curBlock = curBlock+1
-                blockTR = 0
-        runTR = runTR+1
-        blockTR = blockTR+1
     print(f"==END OF RUN {curRun}!==\n")
-    curRun = curRun+1
-    curBlock = 1
-    runTR=1
-    blockTR=1
     archive.appendBidsRun(currentBidsRun)
     bidsInterface.closeStream(streamId)
 
