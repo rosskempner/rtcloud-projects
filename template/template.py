@@ -147,7 +147,8 @@ startRun = int(cfg.runNum[0])
 startBlock = int(cfg.blockNum)
 numRuns = int(cfg.numRuns)
 numBlocks = int(cfg.numBlocks)
-TRs_per_run = cfg.num_total_TRs
+TRs_per_run = int(cfg.num_total_TRs)
+num_TRs_per_block = int(cfg.num_TRs_per_block)
 disdaqs = 10 # num volumes at start of run to discard for MRI to reach steady state
 hrf_delay = 2 # assuming relevant brain activations emerge 2 TRs later (1 TR = 2 sec)
 
@@ -335,7 +336,7 @@ for curRun in range(startRun,numRuns+1):
                                                 values={'values': str(np.round(np.mean(img),2))})
 
                 # Check if end of block
-                if ((TR-disdaqs) % cfg.num_TRs_per_block) == 0: 
+                if ((TR-disdaqs) % num_TRs_per_block) == 0: 
                     print(f"==END OF BLOCK {curBlock}!==\n")
                     # if end of stable blocks, train scene-classifier and face-classifier
                     if curBlock==4: 
