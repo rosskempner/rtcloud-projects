@@ -147,7 +147,7 @@ startRun = int(cfg.runNum[0])
 startBlock = int(cfg.blockNum)
 numRuns = int(cfg.numRuns)
 numBlocks = int(cfg.numBlocks)
-TRs_per_run = int(cfg.num_total_TRs)
+num_TRs_per_run = int(cfg.num_total_TRs)
 num_TRs_per_block = int(cfg.num_TRs_per_block)
 disdaqs = 10 # num volumes at start of run to discard for MRI to reach steady state
 hrf_delay = 2 # assuming relevant brain activations emerge 2 TRs later (1 TR = 2 sec)
@@ -202,18 +202,15 @@ we transform the DICOM data into a Nifti file and then apply motion correction
 and spatial smoothing. We then mask voxels and save the activations 
 for later training of the multivoxel classifier.
 ===================================================================="""
-# will be saving our realtime classification outputs to the following empty array
-realtime_outputs = []
-
-# # VNC Viewer: if on cloud server, use VNC to show GUIs in web interface (cannot use "--test" mode)
-# call("DISPLAY=:1 xeyes",shell=True) # can replace xeyes with any GUI (like fsleyes)
-
 # clear existing web browser plots if there are any
 try:
     webInterface.clearAllPlots()
-    point_idx=-1 # to keep track of where to first plot in the Data Plots tab
+    point_idx=-1 # reset the first x-axis plot location
 except:
     pass
+
+# # VNC Viewer: if on cloud server, use VNC to show GUIs in web interface (cannot use "--test" mode)
+# call("DISPLAY=:1 xeyes",shell=True) # can replace xeyes with any GUI (like fsleyes)
 
 for curRun in range(startRun,numRuns+1):
     # prep stream of DICOMS -> BIDS 
@@ -236,17 +233,29 @@ for curRun in range(startRun,numRuns+1):
     # prep BIDS-Run, which will store each BIDS-Incremental in the current run
     currentBidsRun = BidsRun()
 
+    # Skip analysis of first disdaqs volumes, add 2 TRs to account for hrf delay
+    # TR will be our run-specific TR counter
+    for TR in range(1,disdaqs+hrf_delay+1): 
+        print(f'--- Run {curRun} | TR {TR} ---')
+        # Note that these variables are 1-indexed (starting at one, not zero)!
+        bidsIncremental = bidsInterface.getIncremental(streamId,volIdx=TR,
+                                        demoStep=cfg.demoStep)
+        currentBidsRun.appendIncremental(bidsIncremental)
+        
     for curBlock in range(startBlock,numBlocks+1):
-        for TR in range(1,num_TRs_per_block+1):
-            print(f'--- Run {curRun} | Block {curBlock} | TR {TR} ---')
+        for blockTR in range(1,num_TRs_per_block+1):
+            # set TR based on the current block (since block # could change in web interface)
+            TR = disdaqs+hrf_delay+((curBlock-1)*num_TRs_per_block)+blockTR
+            print(f'--- Run {curRun} | Block {curBlock} | Block TR {blockTR} | TR {TR} ---')
 
-            # Note that these variables are 1-indexed (starting at one, not zero)!
-            bidsIncremental = bidsInterface.getIncremental(streamId,volIdx=TR,
-                                            demoStep=cfg.demoStep)
-            currentBidsRun.appendIncremental(bidsIncremental)
-            niftiObject = bidsIncremental.image
-            
-            if TR > (disdaqs+hrf_delay): # dont analyze disdaq volumes + add 2 TRs to account for hrf delay
+            # ensure we dont try to analyze the final two TRs of the session, because we
+            # are accounting for an hrf delay of 2 TRs, analyzing the last 2 TRs would error
+            if TR <= num_TRs_per_run:
+                bidsIncremental = bidsInterface.getIncremental(streamId,volIdx=TR,
+                                                demoStep=cfg.demoStep)
+                currentBidsRun.appendIncremental(bidsIncremental)
+                niftiObject = bidsIncremental.image
+                
                 # get the true class for this TR (0=N/A, 1=scene, 2=face)
                 # -1 to account for 1-indexing a Python array, another -2 due to hrf delay
                 actual_class = int(run_designs[curRun-1,TR-1-hrf_delay]) 
@@ -299,13 +308,6 @@ for curRun in range(startRun,numRuns+1):
                     except: # if train_activations not yet defined (or corrupted), then define the variable
                         train_activations = img
                         train_classes = actual_class
-                else:
-                    try: # add train_activations from current TR to saved matrix
-                        test_activations = np.vstack([test_activations, img])
-                        test_classes = np.hstack([test_classes, actual_class])
-                    except: # if train_activations not yet defined (or corrupted), then define the variable
-                        test_activations = img
-                        test_classes = actual_class
                 
                 # if neurofeedback block and TR can be used to predict stimulus (1=scene, 2=face)
                 if curBlock>4 and actual_class!=0: 
@@ -317,7 +319,6 @@ for curRun in range(startRun,numRuns+1):
                     scene_class_prob = scene_classifier.predict_proba(zscored_img[None,:]).flatten()[1]
                     face_class_prob = face_classifier.predict_proba(zscored_img[None,:]).flatten()[1]
                     scene_minus_face = scene_class_prob - face_class_prob
-                    realtime_outputs = np.concatenate([realtime_outputs,[scene_minus_face]])
                     """
                     We will use webInterface.plotDataPoint() to send the result to the RTCloud web interface 
                     to be plotted in the Data Plots tab. Each run will have its own data plot. 
@@ -327,7 +328,7 @@ for curRun in range(startRun,numRuns+1):
                     webInterface.plotDataPoint(curRun, point_idx, scene_minus_face)
                     # Send the model outputs back to the computer running analysis_listener. 
                     subjInterface.setResultDict(name=f'run{curRun}_TR{TR}',
-                                                values={'values': scene_minus_face})
+                                                values={'values': str(scene_minus_face)})
                 else: 
                     # To demonstrate analyis_listener functionality without having to wait for neurofeedback 
                     # blocks to begin, output to the computer running analysis_listener the avg. voxel
@@ -335,39 +336,32 @@ for curRun in range(startRun,numRuns+1):
                     subjInterface.setResultDict(name=f'run{curRun}_TR{TR}',
                                                 values={'values': str(np.round(np.mean(img),2))})
 
-                # Check if end of block
-                if ((TR-disdaqs) % num_TRs_per_block) == 0: 
-                    print(f"==END OF BLOCK {curBlock}!==\n")
-                    # if end of stable blocks, train scene-classifier and face-classifier
-                    if curBlock==4: 
-                        A = datetime.now().timestamp()
-                        # z-score the training activations
-                        train_mean = np.mean(train_activations)
-                        train_std = np.std(train_activations)
-                        zscored_activations = (train_activations-train_mean) / train_std
-                        scene_classes = deepcopy(train_classes)
-                        # define classes as correct (1) or incorrect (2) for scene and face model
-                        scene_classes[scene_classes==2]=0
-                        face_classes = deepcopy(train_classes)
-                        face_classes[face_classes==1]=0
-                        face_classes[face_classes==2]=1
-                        # fit classifiers according to respective class labels
-                        scene_classifier = LogisticRegression(penalty='l2', max_iter=300, random_state=0)
-                        face_classifier = LogisticRegression(penalty='l2', max_iter=300, random_state=0)
-                        scene_classifier.fit(zscored_activations, scene_classes)
-                        face_classifier.fit(zscored_activations, face_classes)
-                        print(f"Fit classifier time: {datetime.now().timestamp()-A:.4f}")
+            # Check if end of block
+            if blockTR == num_TRs_per_block:
+                print(f"==END OF BLOCK {curBlock}!==\n")
+                # if end of stable blocks, train scene-classifier and face-classifier
+                if curBlock==4: 
+                    A = datetime.now().timestamp()
+                    # z-score the training activations
+                    train_mean = np.mean(train_activations)
+                    train_std = np.std(train_activations)
+                    zscored_activations = (train_activations-train_mean) / train_std
+                    scene_classes = deepcopy(train_classes)
+                    # define classes as correct (1) or incorrect (2) for scene and face model
+                    scene_classes[scene_classes==2]=0
+                    face_classes = deepcopy(train_classes)
+                    face_classes[face_classes==1]=0
+                    face_classes[face_classes==2]=1
+                    # fit classifiers according to respective class labels
+                    scene_classifier = LogisticRegression(penalty='l2', max_iter=300, random_state=0)
+                    face_classifier = LogisticRegression(penalty='l2', max_iter=300, random_state=0)
+                    scene_classifier.fit(zscored_activations, scene_classes)
+                    face_classifier.fit(zscored_activations, face_classes)
+                    print(f"Fit classifier time: {datetime.now().timestamp()-A:.4f}")
 
     print(f"==END OF RUN {curRun}!==\n")
     archive.appendBidsRun(currentBidsRun)
     bidsInterface.closeStream(streamId)
-
-"""-----------------------------------------------------------------------------
-Let's save the final outputs and send it to the presentation computer.
------------------------------------------------------------------------------"""
-result_dict = {"realtime_outputs": list(realtime_outputs)}
-subjInterface.setResultDict(name='finished_outputs',
-                            values=result_dict)
 
 print("-----------------------------------------------------------------------\n"
 "REAL-TIME EXPERIMENT COMPLETE!\n"
@@ -379,6 +373,6 @@ You are now ready to conduct your own RT-Cloud enabled project!
 
 Additional note: you can create an "initialize.py" and/or "finalize.py" file, which
 are scripts that can run by clicking the respective buttons on the RT-Cloud web 
-browser. This can be helpful when needing to run specific code at the
-beginning or end of your experiment.
+browser (under the Session tab). This can be helpful when needing to run specific 
+code at the beginning or end of your experiment.
 -----------------------------------------------------------------------------"""
