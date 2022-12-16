@@ -37,10 +37,6 @@ for run in range(1,numRuns+1):
     for TR in range(starting_TR,end_TR+1):
         values = subjectInterface.dequeueResult(block=True, timeout=None)['value']
 
-        with open(f'{outPath}/run{run}_TR{TR}.json') as f:
-            results = json.load(f)
-        values = np.round(results['values'],2)
-
         text_msg = f"RUN {run} TR {TR}\n {res}"
 
         waiting = visual.TextStim(win, pos=[0, 0], text=text_msg,
